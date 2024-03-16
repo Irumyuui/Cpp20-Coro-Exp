@@ -1,7 +1,12 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <coroutine>
+#include <cstdint>
+#include <functional>
+#include <mutex>
 #include <utility>
 
 #include "Executor.hpp"
@@ -63,6 +68,10 @@ TResult TaskAwaiter<TResult, TExecutor>::await_resume() noexcept {
     return task_.get_result();
 }
 
+/**
+ * dispatch task to different executor 
+ * 
+ */
 class DispatchAwaiter {
 public:
     explicit DispatchAwaiter(IExecutor *executor) noexcept 
@@ -81,6 +90,30 @@ public:
 
 private:
     IExecutor *executor_;
+};
+
+
+struct SleepAwaiter {
+public:
+    explicit SleepAwaiter(IExecutor *executor, std::int64_t duration) noexcept
+        : executor_(executor), duration_(duration) {
+    }
+
+    bool await_ready() const { return false; }
+
+    void await_suspend(std::coroutine_handle<> handle) const {
+        static Scheduler scheduler{};
+
+        scheduler.execute([this, handle] {
+            executor_->execute([handle] { handle.resume(); });
+        }, duration_);
+    }
+
+    void await_resume() {}
+
+private:
+    IExecutor *executor_;
+    std::int64_t duration_;
 };
 
 } // namespace karus::coro

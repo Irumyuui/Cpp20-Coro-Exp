@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <coroutine>
 #include <deque>
@@ -95,9 +96,20 @@ public:
     void unhandled_exception();
     void return_value(TResult value);
     TResult get_result();
-    template <typename TRet, IsDerivedOfIExecutor TExec> TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task);
     void on_completed(std::function<void(Result<TResult>)> &&fn);
+
+public:
+    template <typename TRet, IsDerivedOfIExecutor TExec>
+    TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task);
     
+    template <typename Rep, typename Period>
+    SleepAwaiter await_transform(std::chrono::duration<Rep, Period> &&duration) {
+        return SleepAwaiter(
+            &executor_, 
+            std::chrono::duration_cast<std::chrono::milliseconds>(duration).count()
+        );
+    }
+
 private:
     void notify_callbacks();
 
@@ -121,9 +133,17 @@ public:
     void unhandled_exception();
     void return_void();
     void get_result();
-    template <typename TRet, IsDerivedOfIExecutor TExec> TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task);
     void on_completed(std::function<void(Result<void>)> &&fn);
     
+public:
+    template <typename TRet, IsDerivedOfIExecutor TExec>
+    TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task);
+
+    template <typename Rep, typename Period>
+    SleepAwaiter await_transform(std::chrono::duration<Rep, Period> &&duration) {
+        return SleepAwaiter(&executor_, duration);
+    }
+
 private:
     void notify_callbacks();
 

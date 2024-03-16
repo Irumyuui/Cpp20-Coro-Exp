@@ -1,12 +1,15 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <thread>
 #include <type_traits>
 
@@ -132,6 +135,128 @@ public:
         executor.execute(std::move(fn));
     }
 };
+
+class DelayedExecutable {
+public:
+    explicit DelayedExecutable(std::function<void()> &&fn, std::int64_t delay)
+        : fn_(std::move(fn)) {
+        auto current_time 
+            = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()
+            ).count();
+        scheduled_time_ = current_time + delay;
+    }
+
+    std::int64_t delay() const {
+        return scheduled_time_ 
+            - std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()
+              ).count();
+    }
+
+    std::int64_t get_sheduled_time() const noexcept {
+        return scheduled_time_;
+    }
+
+    void operator() () {
+        fn_();
+    }
+
+    void operator() () const {
+        fn_();
+    }
+
+    constexpr auto operator <=> (const DelayedExecutable &rhs) const noexcept {
+        return scheduled_time_ <=> rhs.scheduled_time_;
+    }
+
+private:
+    std::function<void()> fn_;
+    std::int64_t scheduled_time_;
+};
+
+class Scheduler {
+public:
+    Scheduler() {
+        is_active_.store(true, std::memory_order_relaxed);
+        work_thread_ = std::jthread([this] {
+            this->run_loop();
+        });
+    }
+    
+    ~Scheduler() noexcept {
+        try {
+            shotdown(false);
+            join();
+        } catch (...) {
+
+        }
+    }
+
+public:
+    void join() {
+        if (work_thread_.joinable()) {
+            work_thread_.join();
+        }
+    }
+
+    void shotdown(bool wait_for_complete = true) {
+        is_active_.store(false, std::memory_order_relaxed);
+        if (!wait_for_complete) {
+            std::scoped_lock lock{mutex_};
+            decltype(delay_tasks_)().swap(delay_tasks_);
+        }
+        cond_.notify_all();
+    }
+
+    void execute(std::function<void()> &&fn, std::int64_t delay) {
+        delay = std::max<std::int64_t>(delay, 0);
+        std::unique_lock lock{mutex_};
+        
+        if (!is_active_.load(std::memory_order_relaxed))
+            return;
+        
+        auto is_need_nodify_one = delay_tasks_.empty() || delay_tasks_.top().delay() > delay;
+        delay_tasks_.emplace(std::move(fn), delay);
+        lock.unlock();
+        
+        if (is_need_nodify_one) 
+            cond_.notify_one();
+    }
+
+private:
+    void run_loop() {
+        while (is_active_.load(std::memory_order_relaxed) || !delay_tasks_.empty()) {
+            std::unique_lock lock{mutex_};
+            if (delay_tasks_.empty()) {
+                cond_.wait(lock);
+            }
+            if (delay_tasks_.empty()) {
+                continue;
+            }
+
+            auto executable = delay_tasks_.top();
+            if (executable.delay() > 0) {
+                auto status = cond_.wait_for(lock, std::chrono::milliseconds(executable.delay()));
+                if (status != std::cv_status::timeout) {
+                    continue;
+                }
+            }
+            delay_tasks_.pop();
+            lock.unlock();
+
+            executable();
+        }
+    }
+
+private:
+    std::priority_queue<DelayedExecutable, std::vector<DelayedExecutable>, std::greater<DelayedExecutable>> delay_tasks_;
+    std::mutex mutex_;
+    std::condition_variable cond_;
+    std::atomic<bool> is_active_;
+    std::jthread work_thread_;
+};
+
 }
 
 #endif  // KARUS_CORO_EXECUTOR_HPP
