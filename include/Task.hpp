@@ -8,6 +8,7 @@
 #include <mutex>
 #include <utility>
 
+#include "Executor.hpp"
 #include "Result.hpp"
 #include "TaskAwaiter.hpp"
 
@@ -16,25 +17,25 @@
 
 namespace karus::coro {
 
-template <typename TResult>
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
 class TaskPromise;
 
-template <>
-class TaskPromise<void>;
+template <IsDerivedOfIExecutor TExecutor>
+class TaskPromise<void, TExecutor>;
 
-template <typename TResult>
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
 class Task;
 
-template <>
-class Task<void>;
+template <IsDerivedOfIExecutor TExecutor>
+class Task<void, TExecutor>;
 
 /*
  * Task with return value
  */
-template <typename TResult>
+template <typename TResult, IsDerivedOfIExecutor TExecutor = SharedLooperExecutor>
 class Task {
 public:
-    using promise_type = TaskPromise<TResult>;
+    using promise_type = TaskPromise<TResult, TExecutor>;
 
 public:
     explicit Task(std::coroutine_handle<promise_type> handle) noexcept;
@@ -58,10 +59,10 @@ private:
 /*
  * Task without return value
  */
-template <>
-class Task<void> {
+template <IsDerivedOfIExecutor TExecutor>
+class Task<void, TExecutor> {
 public:
-    using promise_type = TaskPromise<void>;
+    using promise_type = TaskPromise<void, TExecutor>;
 
 public:
     explicit Task(std::coroutine_handle<promise_type> handle) noexcept;
@@ -85,16 +86,16 @@ private:
 /*
  * Task<TResult> 's promise_type
  */
-template <typename TResult>
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
 class TaskPromise {
 public:
-    std::suspend_never initial_suspend();
+    DispatchAwaiter initial_suspend();
     std::suspend_always final_suspend() noexcept;
-    Task<TResult> get_return_object();
+    Task<TResult, TExecutor> get_return_object();
     void unhandled_exception();
     void return_value(TResult value);
     TResult get_result();
-    template <typename TRet> TaskAwaiter<TRet> await_transform(Task<TRet> &&task);
+    template <typename TRet, IsDerivedOfIExecutor TExec> TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task);
     void on_completed(std::function<void(Result<TResult>)> &&fn);
     
 private:
@@ -105,21 +106,22 @@ private:
     std::optional<Result<TResult>> result_;
     std::mutex mutex_;
     std::condition_variable cond_;
+    TExecutor executor_;
 };
 
 /*
  * Task<void> 's promise_type
  */
-template <>
-class TaskPromise<void> {
+template <IsDerivedOfIExecutor TExecutor>
+class TaskPromise<void, TExecutor> {
 public:
-    std::suspend_never initial_suspend();
+    DispatchAwaiter initial_suspend();
     std::suspend_always final_suspend() noexcept;
-    Task<void> get_return_object();
+    Task<void, TExecutor> get_return_object();
     void unhandled_exception();
     void return_void();
     void get_result();
-    template <typename TRet> TaskAwaiter<TRet> await_transform(Task<TRet> &&task);
+    template <typename TRet, IsDerivedOfIExecutor TExec> TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task);
     void on_completed(std::function<void(Result<void>)> &&fn);
     
 private:
@@ -130,24 +132,25 @@ private:
     std::optional<Result<void>> result_;
     std::mutex mutex_;
     std::condition_variable cond_;
+    TExecutor executor_;
 };
 
 /*
  * class Task<TResult>;
  */
 
-template <typename TResult>
-Task<TResult>::Task(std::coroutine_handle<promise_type> handle) noexcept
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+Task<TResult, TExecutor>::Task(std::coroutine_handle<promise_type> handle) noexcept
     : handle_(handle) {
 }
 
-template <typename TResult>
-Task<TResult>::Task(Task &&task) noexcept
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+Task<TResult, TExecutor>::Task(Task &&task) noexcept
     : handle_(std::exchange(task.handle_, {})) {
 }
 
-template <typename TResult>
-Task<TResult>::~Task() noexcept {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+Task<TResult, TExecutor>::~Task() noexcept {
     try {
         if (handle_)
             handle_.destroy();
@@ -156,13 +159,13 @@ Task<TResult>::~Task() noexcept {
     }
 }
 
-template <typename TResult>
-TResult Task<TResult>::get_result() {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+TResult Task<TResult, TExecutor>::get_result() {
     return handle_.promise().get_result();
 }
 
-template <typename TResult>
-Task<TResult>& Task<TResult>::then(std::function<void(TResult)> &&fn) {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+Task<TResult, TExecutor>& Task<TResult, TExecutor>::then(std::function<void(TResult)> &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             fn(result.get_or_throw());
@@ -173,8 +176,8 @@ Task<TResult>& Task<TResult>::then(std::function<void(TResult)> &&fn) {
     return *this;
 }
 
-template <typename TResult>
-Task<TResult>& Task<TResult>::catching(std::function<void(std::exception&)> &&fn) {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(std::function<void(std::exception&)> &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             result.get_or_throw();
@@ -185,8 +188,8 @@ Task<TResult>& Task<TResult>::catching(std::function<void(std::exception&)> &&fn
     return *this;
 }
 
-template <typename TResult>
-Task<TResult>& Task<TResult>::finally(std::function<void()> &&fn) {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+Task<TResult, TExecutor>& Task<TResult, TExecutor>::finally(std::function<void()> &&fn) {
     handle_.promise().on_completed([fn]([[maybe_unused]] auto result) {
         fn();
     });
@@ -197,15 +200,18 @@ Task<TResult>& Task<TResult>::finally(std::function<void()> &&fn) {
  * class Task<void>;
  */
 
-inline Task<void>::Task(std::coroutine_handle<promise_type> handle) noexcept
+template <IsDerivedOfIExecutor TExecutor>
+inline Task<void, TExecutor>::Task(std::coroutine_handle<promise_type> handle) noexcept
     : handle_(handle) {
 }
 
-inline Task<void>::Task(Task &&task) noexcept
+template <IsDerivedOfIExecutor TExecutor>
+inline Task<void, TExecutor>::Task(Task &&task) noexcept
 : handle_(std::exchange(task.handle_, {})) {
 }
 
-inline Task<void>::~Task() noexcept {
+template <IsDerivedOfIExecutor TExecutor>
+inline Task<void, TExecutor>::~Task() noexcept {
     try {
         if (handle_)
             handle_.destroy();
@@ -214,11 +220,13 @@ inline Task<void>::~Task() noexcept {
     }
 }
 
-inline void Task<void>::get_result() {
+template <IsDerivedOfIExecutor TExecutor>
+inline void Task<void, TExecutor>::get_result() {
     handle_.promise().get_result();
 }
 
-inline Task<void>& Task<void>::then(std::function<void()> &&fn) {
+template <IsDerivedOfIExecutor TExecutor>
+inline Task<void, TExecutor>& Task<void, TExecutor>::then(std::function<void()> &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             result.get_or_throw();
@@ -230,7 +238,8 @@ inline Task<void>& Task<void>::then(std::function<void()> &&fn) {
     return *this;
 }
 
-inline Task<void>& Task<void>::catching(std::function<void(std::exception&)> &&fn) {
+template <IsDerivedOfIExecutor TExecutor>
+inline Task<void, TExecutor>& Task<void, TExecutor>::catching(std::function<void(std::exception&)> &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             result.get_or_throw();
@@ -241,7 +250,8 @@ inline Task<void>& Task<void>::catching(std::function<void(std::exception&)> &&f
     return *this;
 }
 
-inline Task<void>& Task<void>::finally(std::function<void()> &&fn) {
+template <IsDerivedOfIExecutor TExecutor>
+inline Task<void, TExecutor>& Task<void, TExecutor>::finally(std::function<void()> &&fn) {
     handle_.promise().on_completed([fn]([[maybe_unused]] auto result) {
         fn();
     });
@@ -252,41 +262,41 @@ inline Task<void>& Task<void>::finally(std::function<void()> &&fn) {
  * class TaskPromise<TResult>
  */
 
-template <typename TResult>
-std::suspend_never TaskPromise<TResult>::initial_suspend() {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+DispatchAwaiter TaskPromise<TResult, TExecutor>::initial_suspend() {
+    return DispatchAwaiter{ &executor_ };
+}
+
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+std::suspend_always TaskPromise<TResult, TExecutor>::final_suspend() noexcept {
     return {};
 }
 
-template <typename TResult>
-std::suspend_always TaskPromise<TResult>::final_suspend() noexcept {
-    return {};
-}
-
-template <typename TResult>
-Task<TResult> TaskPromise<TResult>::get_return_object() {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+Task<TResult, TExecutor> TaskPromise<TResult, TExecutor>::get_return_object() {
     return Task {
         std::coroutine_handle<TaskPromise>::from_promise(*this)
     };
 }
 
-template <typename TResult>
-void TaskPromise<TResult>::unhandled_exception() {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+void TaskPromise<TResult, TExecutor>::unhandled_exception() {
     std::scoped_lock lock{mutex_};
     result_ = Result<TResult>(std::current_exception());
     cond_.notify_all();
     notify_callbacks();
 }
 
-template <typename TResult>
-void TaskPromise<TResult>::return_value(TResult value) {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+void TaskPromise<TResult, TExecutor>::return_value(TResult value) {
     std::scoped_lock lock{mutex_};
     result_ = Result<TResult>(std::move(value));
     cond_.notify_all();
     notify_callbacks();
 }
 
-template <typename TResult>
-TResult TaskPromise<TResult>::get_result() {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+TResult TaskPromise<TResult, TExecutor>::get_result() {
     std::unique_lock lock{mutex_};
     if (!result_.has_value()) 
         cond_.wait(lock);
@@ -295,14 +305,14 @@ TResult TaskPromise<TResult>::get_result() {
 
 
 // co_await args...
-template <typename TResult>
-    template <typename TRet>
-TaskAwaiter<TRet> TaskPromise<TResult>::await_transform(Task<TRet> &&task) {
-    return TaskAwaiter<TRet>(std::move(task));
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+    template <typename TRet, IsDerivedOfIExecutor TExec>
+TaskAwaiter<TRet, TExec> TaskPromise<TResult, TExecutor>::await_transform(Task<TRet, TExec> &&task) {
+    return TaskAwaiter<TRet, TExec>(std::move(task), &executor_);
 }
 
-template <typename TResult>
-void TaskPromise<TResult>::on_completed(std::function<void(Result<TResult>)> &&fn) {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+void TaskPromise<TResult, TExecutor>::on_completed(std::function<void(Result<TResult>)> &&fn) {
     std::unique_lock lock{mutex_};
     if (result_.has_value()) {
         auto value = result_.value();
@@ -313,8 +323,8 @@ void TaskPromise<TResult>::on_completed(std::function<void(Result<TResult>)> &&f
     }
 }
 
-template <typename TResult>
-void TaskPromise<TResult>::notify_callbacks() {
+template <typename TResult, IsDerivedOfIExecutor TExecutor>
+void TaskPromise<TResult, TExecutor>::notify_callbacks() {
     for (auto value = result_.value(); auto &&callback : callbacks_)
         callback(value);
     callbacks_.clear();
@@ -323,48 +333,56 @@ void TaskPromise<TResult>::notify_callbacks() {
 /*
  * class TaskPromise<void>;
  */
+template <IsDerivedOfIExecutor TExecutor>
+inline DispatchAwaiter TaskPromise<void, TExecutor>::initial_suspend() {
+    return DispatchAwaiter{ &executor_ };
+}
 
-inline std::suspend_never TaskPromise<void>::initial_suspend() {
+template <IsDerivedOfIExecutor TExecutor>
+inline std::suspend_always TaskPromise<void, TExecutor>::final_suspend() noexcept {
     return {};
 }
 
-inline std::suspend_always TaskPromise<void>::final_suspend() noexcept {
-    return {};
-}
-
-inline Task<void> TaskPromise<void>::get_return_object() {
+template <IsDerivedOfIExecutor TExecutor>
+inline Task<void, TExecutor> TaskPromise<void, TExecutor>::get_return_object() {
     return Task {
         std::coroutine_handle<TaskPromise>::from_promise(*this)
     };
 }
 
-inline void TaskPromise<void>::unhandled_exception() {
+template <IsDerivedOfIExecutor TExecutor>
+inline void TaskPromise<void, TExecutor>::unhandled_exception() {
     std::scoped_lock lock{mutex_};
     result_ = Result<void>(std::current_exception());
     cond_.notify_all();
     notify_callbacks();
 }
 
-inline void TaskPromise<void>::return_void() {
+template <IsDerivedOfIExecutor TExecutor>
+inline void TaskPromise<void, TExecutor>::return_void() {
     std::scoped_lock lock{mutex_};
     result_ = Result<void>();
     cond_.notify_all();
     notify_callbacks();
 }
 
-inline void TaskPromise<void>::get_result() {
+template <IsDerivedOfIExecutor TExecutor>
+inline void TaskPromise<void, TExecutor>::get_result() {
     std::unique_lock lock{mutex_};
     if (!result_.has_value()) 
         cond_.wait(lock);
     return result_->get_or_throw();
 }
 
-template <typename TRet>
-TaskAwaiter<TRet> TaskPromise<void>::await_transform(Task<TRet> &&task) {
-    return TaskAwaiter<TRet>(std::move(task));
+
+template <IsDerivedOfIExecutor TExecutor>
+    template <typename TRet, IsDerivedOfIExecutor TExec>
+TaskAwaiter<TRet, TExec> TaskPromise<void, TExecutor>::await_transform(Task<TRet, TExec> &&task) {
+    return TaskAwaiter<TRet, TExec>(std::move(task), &executor_);
 }
 
-inline void TaskPromise<void>::on_completed(std::function<void(Result<void>)> &&fn) {
+template <IsDerivedOfIExecutor TExecutor>
+inline void TaskPromise<void, TExecutor>::on_completed(std::function<void(Result<void>)> &&fn) {
     std::unique_lock lock{mutex_};
     if (result_.has_value()) {
         auto value = result_.value();
@@ -375,7 +393,8 @@ inline void TaskPromise<void>::on_completed(std::function<void(Result<void>)> &&
     }
 }
 
-inline void TaskPromise<void>::notify_callbacks() {
+template <IsDerivedOfIExecutor TExecutor>
+inline void TaskPromise<void, TExecutor>::notify_callbacks() {
     for (auto value = result_.value(); auto &&callback : callbacks_)
         callback(value);
     callbacks_.clear();
