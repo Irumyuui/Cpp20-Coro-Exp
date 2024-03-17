@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <concepts>
 #include <condition_variable>
 #include <coroutine>
@@ -10,74 +11,204 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <future>
 #include <list>
 #include <mutex>
+#include <optional>
+#include <thread>
+#include <type_traits>
 #include <utility>
 
 #include "Executor.hpp"
+#include "Result.hpp"
 
 #ifndef KARUS_CORO_TASK_AWAITER_HPP
 #define KARUS_CORO_TASK_AWAITER_HPP
 
 namespace karus::coro {
 
-template <typename T>
-concept IsAwaiter = requires(T object, std::coroutine_handle<> handle) {
-    {object.await_ready()} -> std::same_as<bool>;
-    object.await_suspend(handle);
-    object.await_resume();
+template <typename TResult>
+class IAwaiter;
+
+template <typename T, typename TResult>
+concept IsAwaiter = std::is_base_of_v<IAwaiter<TResult>, T>;
+
+template <typename TResult>
+class IAwaiter {
+public:
+    using ResultType = TResult;
+    
+public:
+    virtual ~IAwaiter() noexcept = default;
+
+    virtual constexpr bool await_ready() const noexcept {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> handle) {
+        handle_ = handle;
+        after_suspend();
+    }
+
+    TResult await_resume() {
+        before_resume();
+        return result_->get_or_throw();    
+    }
+
+    // set the awaiter's executor
+    template <IsTExecutor TExecutor>
+    void set_executor(TExecutor *executor) {
+        executor_ = executor;
+    }
+
+    // resume the coroutine
+    void resume(TResult result) {
+        dispatch([this, result] {
+            result_ = Result<TResult>(static_cast<TResult>(result));
+            handle_.resume();
+        });
+    }
+
+    void resume() {
+        dispatch([this] { handle_.resume(); });
+    }
+
+    void resume_exception(std::exception_ptr &&e) {
+        dispatch([this, e] {
+            result_ = Result<TResult>(std::move(e));
+            handle_.resume();
+        });
+    }
+
+protected:
+    virtual void after_suspend() {}
+
+    virtual void before_resume() {}
+    
+private:
+    void dispatch(std::function<void()> &&fn) {
+        if (executor_) {
+            executor_->execute(std::move(fn));
+        } else {
+            fn();
+        }
+    }
+
+protected:
+    std::optional<Result<TResult>> result_;
+
+private:
+    IExecutor *executor_{nullptr};
+    std::coroutine_handle<> handle_{nullptr};
 };
 
-template <typename TResult, IsDerivedOfIExecutor TExecutor>
+template <>
+class IAwaiter<void> {
+public:
+    using ResultType = void;
+
+public:
+    virtual ~IAwaiter() noexcept = default;
+
+    virtual constexpr bool await_ready() const noexcept {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> handle) {
+        handle_ = handle;
+        after_suspend();
+    }
+
+    void await_resume() {
+        before_resume();
+        result_->get_or_throw();
+    }
+
+    // set the awaiter's executor
+    template <IsTExecutor TExecutor>
+    void set_executor(TExecutor *executor) {
+        executor_ = executor;
+    }
+
+    // resume the coroutine
+    void resume() {
+        dispatch([this] { handle_.resume(); });
+    }
+
+    void resume_exception(std::exception_ptr &&e) {
+        dispatch([this, e] {
+            result_ = Result<void>(static_cast<std::exception_ptr>(e));
+            handle_.resume();
+        });
+    }
+
+protected:
+    virtual void after_suspend() {}
+
+    virtual void before_resume() {}
+    
+private:
+    void dispatch(std::function<void()> &&fn) {
+        if (executor_) {
+            executor_->execute(std::move(fn));
+        } else {
+            fn();
+        }
+    }
+
+protected:
+    std::optional<Result<void>> result_;
+
+private:
+    IExecutor *executor_{nullptr};
+    std::coroutine_handle<> handle_{nullptr};
+};
+
+// template <typename TResult>
+// class Awaiter : public IAwaiter<TResult> {
+// public:
+//     void resume(TResult result) {
+//         dispatch([this, result = std::move(result)] {
+//             this.result_ = Result<TResult>(std::move(result));
+//             this.handle_.resume();
+//         });
+//     }
+// };
+
+template <typename TResult, IsTExecutor TExecutor>
 class Task;
 
-template <typename TResult, IsDerivedOfIExecutor TExecutor>
-class TaskAwaiter {
+template <typename TResult, IsTExecutor TExecutor>
+class TaskAwaiter : public IAwaiter<TResult> {
 public:
-    explicit TaskAwaiter(Task<TResult, TExecutor> &&task, IExecutor *executor) noexcept;
-    TaskAwaiter(TaskAwaiter &&awaiter) noexcept;
+    explicit TaskAwaiter(Task<TResult, TExecutor> &&task) noexcept
+        : task_(std::move(task)) {
+    }
+
+    TaskAwaiter(TaskAwaiter &&other) noexcept
+        : IAwaiter<TResult>(other), task_(std::move(other.task_)) {
+    }
+
     TaskAwaiter(const TaskAwaiter &) = delete;
+
     TaskAwaiter& operator=(const TaskAwaiter &other) = delete;
 
-public:
-    constexpr bool await_ready() const noexcept;
-    void await_suspend(std::coroutine_handle<> handle) noexcept;
-    TResult await_resume() noexcept;
+protected:
+    void after_suspend() override {
+        task_.finally([this] {
+            this->executor_->execute([this] {
+                this->handle.resume();
+            });
+        });
+    }
+
+    void before_resume() override {
+        this->result_ = Result<TResult>(task_.get_result());
+    }
 
 private:
     Task<TResult, TExecutor> task_;
-    IExecutor *executor_;
 };
-
-template <typename TResult, IsDerivedOfIExecutor TExecutor>
-TaskAwaiter<TResult, TExecutor>::TaskAwaiter(Task<TResult, TExecutor> &&task, IExecutor *executor) noexcept
-    : task_(std::move(task)), executor_(executor) {
-}
-
-template <typename TResult, IsDerivedOfIExecutor TExecutor>
-TaskAwaiter<TResult, TExecutor>::TaskAwaiter(TaskAwaiter &&awaiter) noexcept
-    : task_(std::exchange(awaiter.task_, {})),
-      executor_(std::exchange(awaiter.executor_, {})) {
-}
-
-template <typename TResult, IsDerivedOfIExecutor TExecutor>
-constexpr bool TaskAwaiter<TResult, TExecutor>::await_ready() const noexcept {
-    return false;
-}
-
-template <typename TResult, IsDerivedOfIExecutor TExecutor>
-void TaskAwaiter<TResult, TExecutor>::await_suspend(std::coroutine_handle<> handle) noexcept {
-    task_.finally([handle, this] {
-        executor_->execute([handle] {
-            handle.resume();
-        });
-    });
-}
-
-template <typename TResult, IsDerivedOfIExecutor TExecutor>
-TResult TaskAwaiter<TResult, TExecutor>::await_resume() noexcept {
-    return task_.get_result();
-}
 
 // dispatch task to different executor 
 class DispatchAwaiter {
@@ -102,28 +233,26 @@ private:
 };
 
 // coroutine sleep awaiter.
-class SleepAwaiter {
+class SleepAwaiter : public IAwaiter<void> {
 public:
-    explicit SleepAwaiter(IExecutor *executor, std::int64_t duration) noexcept
-        : executor_(executor), duration_(duration) {
+    explicit SleepAwaiter(std::int64_t duration) noexcept
+        : duration_(duration) {
     }
 
-    bool await_ready() const { return false; }
+    template <typename Rep, typename Period>
+    explicit SleepAwaiter(std::chrono::duration<Rep, Period> &&duration) noexcept
+        : duration_(std::chrono::duration_cast<std::chrono::milliseconds>(duration).count()) {
+    }
 
+protected:
     // has a static scheduler menber.
     // the coroutine will be managed by the scheduler
-    void await_suspend(std::coroutine_handle<> handle) const {
+    void after_suspend() override {
         static Scheduler scheduler{};
-
-        scheduler.execute([this, handle] {
-            executor_->execute([handle] { handle.resume(); });
-        }, duration_);
+        scheduler.execute([this] { resume(); }, duration_);
     }
 
-    void await_resume() {}
-
 private:
-    IExecutor *executor_;
     std::int64_t duration_;
 };
 
@@ -331,17 +460,16 @@ private:
 
 // channel's writer
 template <typename TValue>
-class WriteAwaiter {
+class WriteAwaiter : public IAwaiter<TValue> {
 public:
     explicit WriteAwaiter(Channel<TValue> *channel, TValue value)
         : channel_(channel), value_(std::move(value)) {
     }
 
     WriteAwaiter(WriteAwaiter &&other) noexcept
-        : channel_(std::exchange(other.channel_, nullptr)),
-          executor_(std::exchange(other.executor_, nullptr)),
-          value_(other.value_),
-          call_handle_(other.call_handle_) {
+        : IAwaiter<TValue>(other),
+          channel_(std::exchange(other.channel_, nullptr)),
+          value_(other.value_) {
     }
 
     ~WriteAwaiter() noexcept {
@@ -354,39 +482,12 @@ public:
         }
     }
 
-public:
-    constexpr bool await_ready() const noexcept {
-        return false;
-    }
-
-    // suspend the coroutine.
-    // take current handel, then add to channel's await writer queue.
-    void await_suspend(std::coroutine_handle<> handle) {
-        call_handle_ = handle;
+protected:
+    void after_suspend() override {
         channel_->try_push_writer(this);
     }
 
-    // if the writer want to be resumed, the channel must be actived.
-    // if the channel is not active, then will throw an exception from channel object.
-    void await_resume() {
-        channel_->check_closed();
-    }
-
-    // channel will call this method.
-    // if has executor, then let the executor exec.
-    // or on this thread.
-    void resume() {
-        if (executor_) {
-            executor_->execute([this] { call_handle_.resume(); });
-        } else {
-            call_handle_.resume();
-        }
-    }
-
-    void set_executor(IExecutor *executor) {
-        executor_ = executor;
-    }
-
+public:
     TValue get_value() const {
         return value_;
     }
@@ -396,26 +497,22 @@ public:
     }
 
 private:
-    Channel<TValue> *channel_;              // current object requires the channel.
-    IExecutor *executor_{nullptr};
+    Channel<TValue> *channel_;
     TValue value_;
-    std::coroutine_handle<> call_handle_;
 };
 
 // channel reader
 template <typename TValue>
-class ReadAwaiter {
+class ReadAwaiter : public IAwaiter<TValue> {
 public:
-    explicit ReadAwaiter(Channel<TValue>* channel)
+    explicit ReadAwaiter(Channel<TValue> *channel)
         : channel_(channel) {
     }
 
     ReadAwaiter(ReadAwaiter &&other) noexcept
-        : channel_(std::exchange(other.channel_, nullptr)),
-          executor_(std::exchange(other.executor_, nullptr)),
-          value_(other.value_),
-          value_ptr_(std::exchange(other.value_ptr_, nullptr)),
-          call_handle_(other.call_handle_) {
+        : IAwaiter<TValue>(other),
+          channel_(std::exchange(other.channel_, nullptr)),
+          value_ptr_(std::exchange(other.value_ptr_, nullptr)) {
     }
 
     ~ReadAwaiter() noexcept {
@@ -425,67 +522,53 @@ public:
             }
         } catch (...) {
 
-        }
+        }   
     }
 
 public:
-    constexpr bool await_ready() const noexcept {
-        return false;
-    }
-
-    void await_suspend(std::coroutine_handle<> handle) {
-        call_handle_ = handle;
-        channel_->try_push_reader(this);
-    }
-
-    // check the channel has been closed.
-    // if the channel is closed, then throw ChannelClosedException.
-    // otherwith return read value.
-    TValue await_resume() {
-        channel_->check_closed();
-        channel_ = nullptr;
-        return value_;
-    }
-    
-    // the method will be called by channel when it needed to read the value.
-    void resume(TValue value) {
-        value_ = value;
-        if (value_ptr_) {
-            *value_ptr_ = value;
-        }
-        resume();
-    }
-
-    void resume() {
-        if (executor_) {
-            executor_->execute([this] { call_handle_.resume(); });
-        } else {
-            call_handle_.resume();
-        }
-    }
-
     void set_value_ptr(TValue *ptr) noexcept {
         value_ptr_ = ptr;
     }
 
-    void set_executor(IExecutor *executor) {
-        executor_ = executor;
+protected:
+    void after_suspend() override {
+        channel_->try_push_reader(this);
     }
 
-    TValue get_value() const {
-        return value_;
-    }
-
-    TValue get_value() {
-        return value_;
+    void before_resume() override {
+        channel_->check_closed();
+        if (value_ptr_) {
+            *value_ptr_ = this->result_->get_or_throw();
+        }
+        channel_ = nullptr;
     }
 
 private:
-    Channel<TValue> *channel_;              // current object requires the channel.
-    IExecutor *executor_{nullptr};
-    TValue value_;
-    TValue* value_ptr_{nullptr};
-    std::coroutine_handle<> call_handle_;
+    Channel<TValue> *channel_;
+    TValue *value_ptr_{nullptr};
+};
+
+
+template <typename TResult>
+class FutureAwait : public IAwaiter<TResult> {
+public:
+    explicit FutureAwait(std::future<TResult> &&future) noexcept
+        : future_(std::move(future)) {
+    }
+
+    FutureAwait(FutureAwait &&other) noexcept
+        : IAwaiter<TResult>(other), future_(std::move(other.future_)) {
+    }
+
+protected:
+    void after_suspend() override {
+        std::jthread([this] {
+            this->resume(this->future_.get());
+        }).detach();
+    }
+
+private:
+    std::future<TResult> future_;
 };
 
 } // namespace karus::coro

@@ -27,7 +27,7 @@ public:
 
 // check the type is derived from IExecutor.
 template <typename T>
-concept IsDerivedOfIExecutor = std::is_base_of_v<IExecutor, T> && !std::is_same_v<T, IExecutor>;
+concept IsTExecutor = std::is_base_of_v<IExecutor, T> && !std::is_same_v<T, IExecutor>;
 
 // the executor just run the coroutine on current thread.
 class NoopExecutor : public IExecutor {
