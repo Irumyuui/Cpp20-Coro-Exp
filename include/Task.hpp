@@ -31,7 +31,7 @@ template <IsTExecutor TExecutor>
 class Task<void, TExecutor>;
 
 // a task which will contain a result.
-template <typename TResult, IsTExecutor TExecutor = SharedLooperExecutor>
+template <typename TResult, IsTExecutor TExecutor = NoopExecutor>
 class Task {
 public:
     using promise_type = TaskPromise<TResult, TExecutor>;
@@ -94,7 +94,7 @@ public:
 
 public:
     template <typename TAwaiter>
-        requires IsAwaiter<TAwaiter, typename TAwaiter::ReturnType>
+        requires IsAwaiter<TAwaiter, typename TAwaiter::ResultType>
     TAwaiter await_transform(TAwaiter awaiter) {
         awaiter.set_executor(&executor_);
         return awaiter;
@@ -102,7 +102,7 @@ public:
 
     template <typename TRet, IsTExecutor TExec>
     TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task) {
-        return TaskAwaiter<TRet, TExec>(std::move(task));
+        return await_transform(TaskAwaiter<TRet, TExec>(std::move(task)));
     }
 
 private:
@@ -138,7 +138,7 @@ public:
 
     template <typename TRet, IsTExecutor TExec>
     TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task) {
-        return TaskAwaiter<TRet, TExec>(std::move(task));
+        return await_transform(TaskAwaiter<TRet, TExec>(std::move(task)));
     }
     
 private:
@@ -168,12 +168,8 @@ Task<TResult, TExecutor>::Task(Task &&task) noexcept
 
 template <typename TResult, IsTExecutor TExecutor>
 Task<TResult, TExecutor>::~Task() noexcept {
-    try {
-        if (handle_)
-            handle_.destroy();
-    } catch (...) {
-
-    }
+    if (handle_)
+        handle_.destroy();
 }
 
 template <typename TResult, IsTExecutor TExecutor>
@@ -210,7 +206,7 @@ Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(std::function<void(
 // accepts a callback function that just work.
 template <typename TResult, IsTExecutor TExecutor>
 Task<TResult, TExecutor>& Task<TResult, TExecutor>::finally(std::function<void()> &&fn) {
-    handle_.promise().on_completed([fn]([[maybe_unused]] auto result) {
+    handle_.promise().on_completed([fn](auto) {
         fn();
     });
     return *this;
@@ -232,12 +228,8 @@ inline Task<void, TExecutor>::Task(Task &&task) noexcept
 
 template <IsTExecutor TExecutor>
 inline Task<void, TExecutor>::~Task() noexcept {
-    try {
-        if (handle_)
-            handle_.destroy();
-    } catch (...) {
-
-    }
+    if (handle_)
+        handle_.destroy();
 }
 
 template <IsTExecutor TExecutor>
@@ -272,7 +264,7 @@ inline Task<void, TExecutor>& Task<void, TExecutor>::catching(std::function<void
 
 template <IsTExecutor TExecutor>
 inline Task<void, TExecutor>& Task<void, TExecutor>::finally(std::function<void()> &&fn) {
-    handle_.promise().on_completed([fn]([[maybe_unused]] auto result) {
+    handle_.promise().on_completed([fn](auto) {
         fn();
     });
     return *this;

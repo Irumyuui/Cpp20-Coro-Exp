@@ -56,8 +56,7 @@ public:
     }
 
     // set the awaiter's executor
-    template <IsTExecutor TExecutor>
-    void set_executor(TExecutor *executor) {
+    void set_executor(IExecutor *executor) {
         executor_ = executor;
     }
 
@@ -125,14 +124,16 @@ public:
     }
 
     // set the awaiter's executor
-    template <IsTExecutor TExecutor>
-    void set_executor(TExecutor *executor) {
+    void set_executor(IExecutor *executor) {
         executor_ = executor;
     }
 
     // resume the coroutine
     void resume() {
-        dispatch([this] { handle_.resume(); });
+        dispatch([this] { 
+            result_ = Result<void>();
+            handle_.resume();
+        });
     }
 
     void resume_exception(std::exception_ptr &&e) {
@@ -185,9 +186,7 @@ public:
 protected:
     void after_suspend() override {
         task_.finally([this] {
-            this->executor_->execute([this] {
-                this->handle.resume();
-            });
+            this->resume();
         });
     }
 
