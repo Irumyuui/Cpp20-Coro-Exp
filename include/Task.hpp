@@ -104,26 +104,6 @@ public:
     TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task) {
         return TaskAwaiter<TRet, TExec>(std::move(task));
     }
-    
-    // template <typename Rep, typename Period>
-    // SleepAwaiter await_transform(std::chrono::duration<Rep, Period> &&duration) {
-    //     return SleepAwaiter(
-    //         &executor_, 
-    //         std::chrono::duration_cast<std::chrono::milliseconds>(duration).count()
-    //     );
-    // }
-
-    // template <typename TValue>
-    // ReadAwaiter<TValue> await_transform(ReadAwaiter<TValue> reader) {
-    //     reader.set_executor(&executor_);
-    //     return reader;
-    // }
-
-    // template <typename TValue>
-    // WriteAwaiter<TValue> await_transform(WriteAwaiter<TValue> writer) {
-    //     writer.set_executor(&executor_);
-    //     return writer;
-    // }
 
 private:
     void notify_callbacks();
@@ -160,25 +140,6 @@ public:
     TaskAwaiter<TRet, TExec> await_transform(Task<TRet, TExec> &&task) {
         return TaskAwaiter<TRet, TExec>(std::move(task));
     }
-
-    // template <typename Rep, typename Period>
-    // SleepAwaiter await_transform(std::chrono::duration<Rep, Period> &&duration) {
-    //     return SleepAwaiter(&executor_, 
-    //         std::chrono::duration_cast<std::chrono::milliseconds>(duration).count()
-    //     );
-    // }
-
-    // template <typename TValue>
-    // ReadAwaiter<TValue> await_transform(ReadAwaiter<TValue> reader) {
-    //     reader.set_executor(&executor_);
-    //     return reader;
-    // }
-
-    // template <typename TValue>
-    // WriteAwaiter<TValue> await_transform(WriteAwaiter<TValue> writer) {
-    //     writer.set_executor(&executor_);
-    //     return writer;
-    // }
     
 private:
     void notify_callbacks();
@@ -362,14 +323,6 @@ TResult TaskPromise<TResult, TExecutor>::get_result() {
     return result_->get_or_throw();
 }
 
-
-// co_await args...
-// template <typename TResult, IsTExecutor TExecutor>
-//     template <typename TRet, IsTExecutor TExec>
-// TaskAwaiter<TRet, TExec> TaskPromise<TResult, TExecutor>::await_transform(Task<TRet, TExec> &&task) {
-//     return TaskAwaiter<TRet, TExec>(std::move(task), &executor_);
-// }
-
 template <typename TResult, IsTExecutor TExecutor>
 void TaskPromise<TResult, TExecutor>::on_completed(std::function<void(Result<TResult>)> &&fn) {
     std::unique_lock lock{mutex_};
@@ -432,13 +385,6 @@ inline void TaskPromise<void, TExecutor>::get_result() {
         cond_.wait(lock);
     return result_->get_or_throw();
 }
-
-
-// template <IsTExecutor TExecutor>
-//     template <typename TRet, IsTExecutor TExec>
-// TaskAwaiter<TRet, TExec> TaskPromise<void, TExecutor>::await_transform(Task<TRet, TExec> &&task) {
-//     return TaskAwaiter<TRet, TExec>(std::move(task), &executor_);
-// }
 
 template <IsTExecutor TExecutor>
 inline void TaskPromise<void, TExecutor>::on_completed(std::function<void(Result<void>)> &&fn) {

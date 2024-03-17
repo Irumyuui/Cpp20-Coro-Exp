@@ -164,17 +164,6 @@ private:
     std::coroutine_handle<> handle_{nullptr};
 };
 
-// template <typename TResult>
-// class Awaiter : public IAwaiter<TResult> {
-// public:
-//     void resume(TResult result) {
-//         dispatch([this, result = std::move(result)] {
-//             this.result_ = Result<TResult>(std::move(result));
-//             this.handle_.resume();
-//         });
-//     }
-// };
-
 template <typename TResult, IsTExecutor TExecutor>
 class Task;
 
