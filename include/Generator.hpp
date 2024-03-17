@@ -46,7 +46,7 @@ public:
             return {};
         }
 
-        std::suspend_always yield_value(std::remove_reference_t<TValue>&& value) noexcept {
+        std::suspend_always yield_value(std::remove_reference_t<Ty>&& value) noexcept {
             value_ptr_ = std::addressof(value);
             return {};
         }
@@ -167,23 +167,23 @@ public:
         (co_yield TValue(std::forward<Ts>(args)), ...);
     }
 
-    // template <typename TConvertor>
-    //     requires (!std::is_void_v<std::invoke_result_t<TConvertor, TValue>>)
-    // Generator<std::invoke_result_t<TConvertor, TValue>> select(TConvertor fn) {
-    //     for (auto it = begin(); it != end(); ++ it) {
-    //         co_yield fn(*it);
-    //     }
-    // }
+    template <typename TConvertor>
+        requires (!std::is_void_v<std::invoke_result_t<TConvertor, TValue>>)
+    Generator<std::invoke_result_t<TConvertor, TValue>> select(TConvertor fn) {
+        for (auto it = begin(); it != end(); ++ it) {
+            co_yield fn(*it);
+        }
+    }
 
-    // template <typename TFiller>
-    //     requires std::is_invocable_r_v<bool, TFiller, TValue>
-    // Generator<TValue> where(TFiller &&fn) {
-    //     for (const auto &item : *this) {
-    //         if (fn(item)) {
-    //             co_yield item;
-    //         }
-    //     }
-    // }
+    template <typename TFiller>
+        requires std::is_invocable_r_v<bool, TFiller, TValue>
+    Generator<TValue> where(TFiller &&fn) {
+        for (auto &&item : *this) {
+            if (fn(item)) {
+                co_yield item;
+            }
+        }
+    }
 
 private:
     std::coroutine_handle<promise_type> handle_{nullptr};
