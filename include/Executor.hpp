@@ -18,15 +18,18 @@
 
 namespace karus::coro {
 
+// the interface of executor.
 class IExecutor {
 public:
     virtual ~IExecutor() noexcept = default;
     virtual void execute(std::function<void()> &&fn) = 0;
 };
 
+// check the type is derived from IExecutor.
 template <typename T>
 concept IsDerivedOfIExecutor = std::is_base_of_v<IExecutor, T> && !std::is_same_v<T, IExecutor>;
 
+// the executor just run the coroutine on current thread.
 class NoopExecutor : public IExecutor {
 public:
     void execute(std::function<void()> &&fn) override {
@@ -34,6 +37,7 @@ public:
     }
 };
 
+// the executor will start a new thread to run the coroutine.
 class NewThreadExecutor : public IExecutor {
 public:
     void execute(std::function<void()> &&fn) override {
@@ -41,6 +45,7 @@ public:
     }
 };
 
+// the executor will use std::async to run the coroutine.
 class AsyncExecutor : public IExecutor {
 public:
     void execute(std::function<void()> &&fn) override {
@@ -48,6 +53,7 @@ public:
     }
 };
 
+// the executor has a thread pool, coroutines maybe on different thread.
 class LooperExecutor : public IExecutor {
 public:
     LooperExecutor() {
@@ -128,6 +134,7 @@ private:
     std::unique_ptr<std::jthread[]> work_threads_;
 };
 
+// this executor is LooperExecutor's wapper, it will execute coroutines using a static looper executor.
 class SharedLooperExecutor : public IExecutor {
 public:
     void execute(std::function<void()> &&fn) override {
@@ -136,6 +143,7 @@ public:
     }
 };
 
+// to impl delay taks
 class DelayedExecutable {
 public:
     explicit DelayedExecutable(std::function<void()> &&fn, std::int64_t delay)
@@ -175,6 +183,7 @@ private:
     std::int64_t scheduled_time_;
 };
 
+// a delay task's scheduler
 class Scheduler {
 public:
     Scheduler() {

@@ -30,9 +30,7 @@ class Task;
 template <IsDerivedOfIExecutor TExecutor>
 class Task<void, TExecutor>;
 
-/*
- * Task with return value
- */
+// a task which will contain a result.
 template <typename TResult, IsDerivedOfIExecutor TExecutor = SharedLooperExecutor>
 class Task {
 public:
@@ -57,9 +55,7 @@ private:
     std::coroutine_handle<promise_type> handle_;
 };
 
-/*
- * Task without return value
- */
+// a task without value.
 template <IsDerivedOfIExecutor TExecutor>
 class Task<void, TExecutor> {
 public:
@@ -84,9 +80,7 @@ private:
     std::coroutine_handle<promise_type> handle_;
 };
 
-/*
- * Task<TResult> 's promise_type
- */
+// Task<TResult> 's promise_type
 template <typename TResult, IsDerivedOfIExecutor TExecutor>
 class TaskPromise {
 public:
@@ -110,6 +104,18 @@ public:
         );
     }
 
+    template <typename TValue>
+    ReadAwaiter<TValue> await_transform(ReadAwaiter<TValue> reader) {
+        reader.set_executor(&executor_);
+        return reader;
+    }
+
+    template <typename TValue>
+    WriteAwaiter<TValue> await_transform(WriteAwaiter<TValue> writer) {
+        writer.set_executor(&executor_);
+        return writer;
+    }
+
 private:
     void notify_callbacks();
 
@@ -121,9 +127,7 @@ private:
     TExecutor executor_;
 };
 
-/*
- * Task<void> 's promise_type
- */
+// Task<TResult> 's promise_type
 template <IsDerivedOfIExecutor TExecutor>
 class TaskPromise<void, TExecutor> {
 public:
@@ -141,9 +145,23 @@ public:
 
     template <typename Rep, typename Period>
     SleepAwaiter await_transform(std::chrono::duration<Rep, Period> &&duration) {
-        return SleepAwaiter(&executor_, duration);
+        return SleepAwaiter(&executor_, 
+            std::chrono::duration_cast<std::chrono::milliseconds>(duration).count()
+        );
     }
 
+    template <typename TValue>
+    ReadAwaiter<TValue> await_transform(ReadAwaiter<TValue> reader) {
+        reader.set_executor(&executor_);
+        return reader;
+    }
+
+    template <typename TValue>
+    WriteAwaiter<TValue> await_transform(WriteAwaiter<TValue> writer) {
+        writer.set_executor(&executor_);
+        return writer;
+    }
+    
 private:
     void notify_callbacks();
 
@@ -184,6 +202,7 @@ TResult Task<TResult, TExecutor>::get_result() {
     return handle_.promise().get_result();
 }
 
+// accepts a callback function that handles asynchronous return values
 template <typename TResult, IsDerivedOfIExecutor TExecutor>
 Task<TResult, TExecutor>& Task<TResult, TExecutor>::then(std::function<void(TResult)> &&fn) {
     handle_.promise().on_completed([fn](auto result) {
@@ -196,6 +215,7 @@ Task<TResult, TExecutor>& Task<TResult, TExecutor>::then(std::function<void(TRes
     return *this;
 }
 
+// accepts a callback function that handles exceptions in asynchronous
 template <typename TResult, IsDerivedOfIExecutor TExecutor>
 Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(std::function<void(std::exception&)> &&fn) {
     handle_.promise().on_completed([fn](auto result) {
@@ -208,6 +228,7 @@ Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(std::function<void(
     return *this;
 }
 
+// accepts a callback function that just work.
 template <typename TResult, IsDerivedOfIExecutor TExecutor>
 Task<TResult, TExecutor>& Task<TResult, TExecutor>::finally(std::function<void()> &&fn) {
     handle_.promise().on_completed([fn]([[maybe_unused]] auto result) {
