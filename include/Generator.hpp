@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <exception>
 #include <functional>
+#include <iostream>
 #include <iterator>
 #include <memory>
+#include <ranges>
 #include <type_traits>
 #include <utility>
 
@@ -17,7 +19,7 @@ namespace karus::coro {
 template <typename Ty>
 class Generator {
 public:
-    using TValue = std::remove_reference_t<Ty>;
+    using TValue = std::remove_cv_t<Ty>;
     using TRef = std::conditional_t<std::is_reference_v<Ty>, Ty, Ty&>;
     using TPtr = TValue*;
     
@@ -71,25 +73,34 @@ public:
 
     private:
         TPtr value_ptr_{nullptr};
-        std::exception_ptr except_;
+        std::exception_ptr except_{nullptr};
     };
 
     // generator's iterator
-    class Iterator {
-    public:        
-        Iterator(Iterator &&other) noexcept 
+    class iterator {
+    public:
+        using iterator_category = std::input_iterator_tag;
+        using value_type = TValue;
+        using pointer = TPtr;
+        using reference = TRef;
+        using difference_type = std::ptrdiff_t;
+
+    public:
+        iterator(std::default_sentinel_t) noexcept : handle_{nullptr} {}
+
+        iterator(iterator &&other) noexcept 
             : handle_(std::exchange(other.handle_, {})) {}
 
-        Iterator& operator=(Iterator &&other) noexcept {
+        iterator& operator=(iterator &&other) noexcept {
             handle_ = std::exchange(other.handle_, {});
             return *this;
         }
 
-        TValue& operator*() const noexcept {
+        [[nodiscard]] TValue& operator*() const noexcept {
             return handle_.promise().get_value();
         }
 
-        Iterator& operator++() {
+        [[nodiscard]] iterator& operator++() {
             handle_.resume();
             if (handle_.done()) {
                 handle_.promise().try_throw();
@@ -101,26 +112,26 @@ public:
             [[maybe_unused]] auto result = ++ *this;
         }
 
-        friend constexpr bool operator==(const Iterator &it, std::default_sentinel_t) noexcept {
+        friend constexpr bool operator==(const iterator &it, std::default_sentinel_t) noexcept {
             return !it.handle_ || it.handle_.done();
         }
 
-        friend constexpr bool operator==(std::default_sentinel_t, const Iterator &it) noexcept {
+        friend constexpr bool operator==(std::default_sentinel_t, const iterator &it) noexcept {
             return it == std::default_sentinel;
         }
 
-        friend constexpr bool operator!=(const Iterator &it, std::default_sentinel_t) noexcept {
+        friend constexpr bool operator!=(const iterator &it, std::default_sentinel_t) noexcept {
             return !(it == std::default_sentinel);
         }
 
-        friend constexpr bool operator!=(std::default_sentinel_t, const Iterator &it) noexcept {
+        friend constexpr bool operator!=(std::default_sentinel_t, const iterator &it) noexcept {
             return !(it == std::default_sentinel);
         }
 
     private:
         template <typename> friend class Generator;
         
-        explicit Iterator(std::coroutine_handle<promise_type> handle_) noexcept
+        explicit iterator(std::coroutine_handle<promise_type> handle_) noexcept
             : handle_(handle_) {}
 
     private:
@@ -148,14 +159,14 @@ public:
     }
 
 public:
-    Iterator begin() {
+    [[nodiscard]] iterator begin() {
         if (handle_) {
             handle_.resume();
             if (handle_.done()) {
                 handle_.promise().try_throw();
             }
         }
-        return Iterator{ handle_ };
+        return iterator{ handle_ };
     }
 
     std::default_sentinel_t end() const noexcept {
@@ -163,13 +174,13 @@ public:
     }
 
     template <typename ...Ts>
-    static Generator<TValue> from(Ts &&...args) {
+    [[nodiscard]] static Generator from(Ts &&...args) {
         (co_yield TValue(std::forward<Ts>(args)), ...);
     }
 
     template <typename TConvertor>
         requires (!std::is_void_v<std::invoke_result_t<TConvertor, TValue>>)
-    Generator<std::invoke_result_t<TConvertor, TValue>> select(TConvertor fn) {
+    [[nodiscard]] Generator<std::invoke_result_t<TConvertor, TValue>> select(TConvertor &&fn) {
         for (auto it = begin(); it != end(); ++ it) {
             co_yield fn(*it);
         }
@@ -177,7 +188,7 @@ public:
 
     template <typename TFiller>
         requires std::is_invocable_r_v<bool, TFiller, TValue>
-    Generator<TValue> where(TFiller &&fn) {
+    [[nodiscard]] Generator<TValue> where(TFiller &&fn) {
         for (auto &&item : *this) {
             if (fn(item)) {
                 co_yield item;
@@ -185,9 +196,42 @@ public:
         }
     }
 
+    template <typename TFn>
+        requires std::is_invocable_r_v<void, TFn, TRef>
+    [[nodiscard]] Generator<TValue> for_each(TFn &&fn) {
+        for (auto &&item : *this) {
+            fn(item);
+            co_yield item;
+        }
+    }
+
+    template <typename TContianer>
+        requires requires(TContianer cont, TValue value) { cont.push_back(value); }
+    [[nodiscard]] TContianer collect() {
+        auto result = TContianer{};
+        for (auto item : *this) {
+            result.push_back(item);
+        }
+        return result;
+    }
+
 private:
     std::coroutine_handle<promise_type> handle_{nullptr};
 };
+
+template <std::input_iterator Iter, typename TResult = typename Iter::value_type>
+    requires std::is_convertible_v<typename Iter::value_type, TResult>
+[[nodiscard]] Generator<TResult> as_generator(Iter begin, Iter end) {
+    while (begin != end) {
+        co_yield *begin;
+        ++ begin;
+    }
+}
+
+[[nodiscard]] auto as_generator(std::ranges::range auto &&range) {
+    return as_generator(std::ranges::begin(range), std::ranges::end(range));
+}
+
 }
 
 #endif
