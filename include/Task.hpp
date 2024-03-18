@@ -7,6 +7,7 @@
 #include <exception>
 #include <functional>
 #include <mutex>
+#include <type_traits>
 #include <utility>
 
 #include "Executor.hpp"
@@ -47,9 +48,17 @@ public:
     TResult get_result();
 
 public:
-    Task& then(std::function<void(TResult)> &&fn);
-    Task& catching(std::function<void(std::exception&)> &&fn);
-    Task& finally(std::function<void()> &&fn);
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, TResult>
+    Task& then(Fn &&fn);
+
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, std::exception&>
+    Task& catching(Fn &&fn);
+
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn>
+    Task& finally(Fn &&fn);
 
 private:
     std::coroutine_handle<promise_type> handle_;
@@ -72,9 +81,17 @@ public:
     void get_result();
 
 public:
-    Task& then(std::function<void()> &&fn);
-    Task& catching(std::function<void(std::exception&)> &&fn);
-    Task& finally(std::function<void()> &&fn);
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn>
+    Task& then(Fn &&fn);
+
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, std::exception&>
+    Task& catching(Fn &&fn);
+
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn>
+    Task& finally(Fn &&fn);
 
 private:
     std::coroutine_handle<promise_type> handle_;
@@ -179,7 +196,9 @@ TResult Task<TResult, TExecutor>::get_result() {
 
 // accepts a callback function that handles asynchronous return values
 template <typename TResult, IsTExecutor TExecutor>
-Task<TResult, TExecutor>& Task<TResult, TExecutor>::then(std::function<void(TResult)> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, TResult>
+Task<TResult, TExecutor>& Task<TResult, TExecutor>::then(Fn &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             fn(result.get_or_throw());
@@ -192,7 +211,9 @@ Task<TResult, TExecutor>& Task<TResult, TExecutor>::then(std::function<void(TRes
 
 // accepts a callback function that handles exceptions in asynchronous
 template <typename TResult, IsTExecutor TExecutor>
-Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(std::function<void(std::exception&)> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, std::exception&>
+Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(Fn &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             result.get_or_throw();
@@ -205,7 +226,9 @@ Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(std::function<void(
 
 // accepts a callback function that just work.
 template <typename TResult, IsTExecutor TExecutor>
-Task<TResult, TExecutor>& Task<TResult, TExecutor>::finally(std::function<void()> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn>
+Task<TResult, TExecutor>& Task<TResult, TExecutor>::finally(Fn &&fn) {
     handle_.promise().on_completed([fn](auto) {
         fn();
     });
@@ -238,7 +261,9 @@ inline void Task<void, TExecutor>::get_result() {
 }
 
 template <IsTExecutor TExecutor>
-inline Task<void, TExecutor>& Task<void, TExecutor>::then(std::function<void()> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn>
+inline Task<void, TExecutor>& Task<void, TExecutor>::then(Fn &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             result.get_or_throw();
@@ -251,7 +276,9 @@ inline Task<void, TExecutor>& Task<void, TExecutor>::then(std::function<void()> 
 }
 
 template <IsTExecutor TExecutor>
-inline Task<void, TExecutor>& Task<void, TExecutor>::catching(std::function<void(std::exception&)> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, std::exception&>
+inline Task<void, TExecutor>& Task<void, TExecutor>::catching(Fn &&fn) {
     handle_.promise().on_completed([fn](auto result) {
         try {
             result.get_or_throw();
@@ -263,7 +290,9 @@ inline Task<void, TExecutor>& Task<void, TExecutor>::catching(std::function<void
 }
 
 template <IsTExecutor TExecutor>
-inline Task<void, TExecutor>& Task<void, TExecutor>::finally(std::function<void()> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn>
+inline Task<void, TExecutor>& Task<void, TExecutor>::finally(Fn &&fn) {
     handle_.promise().on_completed([fn](auto) {
         fn();
     });
