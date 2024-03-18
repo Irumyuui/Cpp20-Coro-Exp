@@ -107,7 +107,10 @@ public:
     void unhandled_exception();
     void return_value(TResult value);
     TResult get_result();
-    void on_completed(std::function<void(Result<TResult>)> &&fn);
+
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, Result<TResult>>
+    void on_completed(Fn &&fn);
 
 public:
     template <typename TAwaiter>
@@ -143,7 +146,10 @@ public:
     void unhandled_exception();
     void return_void();
     void get_result();
-    void on_completed(std::function<void(Result<void>)> &&fn);
+
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, Result<void>>
+    void on_completed(Fn &&fn);
     
 public:
     template <typename TAwaiter>
@@ -345,7 +351,9 @@ TResult TaskPromise<TResult, TExecutor>::get_result() {
 }
 
 template <typename TResult, IsTExecutor TExecutor>
-void TaskPromise<TResult, TExecutor>::on_completed(std::function<void(Result<TResult>)> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, Result<TResult>>
+void TaskPromise<TResult, TExecutor>::on_completed(Fn &&fn) {
     std::unique_lock lock{mutex_};
     if (result_.has_value()) {
         auto value = result_.value();
@@ -408,7 +416,9 @@ inline void TaskPromise<void, TExecutor>::get_result() {
 }
 
 template <IsTExecutor TExecutor>
-inline void TaskPromise<void, TExecutor>::on_completed(std::function<void(Result<void>)> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn, Result<void>>
+inline void TaskPromise<void, TExecutor>::on_completed(Fn &&fn) {
     std::unique_lock lock{mutex_};
     if (result_.has_value()) {
         auto value = result_.value();
