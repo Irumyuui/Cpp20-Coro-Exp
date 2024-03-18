@@ -7,5 +7,6 @@
 #include "TaskAwaiter.hpp"
 #include "Task.hpp"
 #include "Result.hpp"
+#include "Generator.hpp"
 
 #endif  // KARUS_CORO_HPP

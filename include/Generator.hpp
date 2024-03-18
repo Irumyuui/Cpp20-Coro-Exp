@@ -3,8 +3,6 @@
 #include <coroutine>
 #include <cstddef>
 #include <exception>
-#include <functional>
-#include <iostream>
 #include <iterator>
 #include <memory>
 #include <ranges>
@@ -58,22 +56,29 @@ public:
         constexpr void return_void() const noexcept {};
 
         void unhandled_exception() {
-            except_ = std::current_exception();
+            exception_ptr_ = std::current_exception();
         }
 
         void try_throw() {
-            if (except_) {
-                std::rethrow_exception(except_);
+            if (exception_ptr_) {
+                std::rethrow_exception(exception_ptr_);
             }
         }
 
-        TRef get_value() const noexcept {
+        TRef get_value() const {
+            return static_cast<TRef>(*value_ptr_);
+        }
+
+        TRef get_or_throw() const {
+            if (exception_ptr_) {
+                std::rethrow_exception(exception_ptr_);
+            }
             return static_cast<TRef>(*value_ptr_);
         }
 
     private:
         TPtr value_ptr_{nullptr};
-        std::exception_ptr except_{nullptr};
+        std::exception_ptr exception_ptr_{nullptr};
     };
 
     // generator's iterator
@@ -87,6 +92,10 @@ public:
 
     public:
         iterator(std::default_sentinel_t) noexcept : handle_{nullptr} {}
+
+        iterator(const iterator&) = delete;
+
+        iterator& operator=(const iterator&) = delete;
 
         iterator(iterator &&other) noexcept 
             : handle_(std::exchange(other.handle_, {})) {}
@@ -106,6 +115,10 @@ public:
                 handle_.promise().try_throw();
             }
             return *this;
+        }
+
+        void swap(iterator &other) noexcept {
+            std::swap(handle_, other.handle_);
         }
         
         void operator++(int) {
@@ -215,22 +228,22 @@ public:
         return result;
     }
 
+    template <std::input_iterator Iter, typename TResult = typename Iter::value_type>
+        requires std::is_convertible_v<typename Iter::value_type, TResult>
+    [[nodiscard]] static Generator from_iter(Iter begin, Iter end) {
+        while (begin != end) {
+            co_yield *begin;
+            ++ begin;
+        }
+    }
+
+    [[nodiscard]] static auto from_iter(std::ranges::range auto &&range) {
+        return from_iter(std::ranges::begin(range), std::ranges::end(range));
+    }
+
 private:
     std::coroutine_handle<promise_type> handle_{nullptr};
 };
-
-template <std::input_iterator Iter, typename TResult = typename Iter::value_type>
-    requires std::is_convertible_v<typename Iter::value_type, TResult>
-[[nodiscard]] Generator<TResult> as_generator(Iter begin, Iter end) {
-    while (begin != end) {
-        co_yield *begin;
-        ++ begin;
-    }
-}
-
-[[nodiscard]] auto as_generator(std::ranges::range auto &&range) {
-    return as_generator(std::ranges::begin(range), std::ranges::end(range));
-}
 
 }
 
