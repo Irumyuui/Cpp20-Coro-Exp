@@ -245,8 +245,8 @@ private:
             }
 
             auto executable = delay_tasks_.top();
-            if (executable.delay() > 0) {
-                auto status = cond_.wait_for(lock, std::chrono::milliseconds(executable.delay()));
+            if (auto delay = executable.delay(); delay > 0) {
+                auto status = cond_.wait_for(lock, std::chrono::milliseconds(delay));
                 if (status != std::cv_status::timeout) {
                     continue;
                 }

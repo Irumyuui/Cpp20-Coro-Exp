@@ -205,7 +205,7 @@ template <typename TResult, IsTExecutor TExecutor>
     template <typename Fn>
         requires std::is_invocable_r_v<void, Fn, TResult>
 Task<TResult, TExecutor>& Task<TResult, TExecutor>::then(Fn &&fn) {
-    handle_.promise().on_completed([fn](auto result) {
+    handle_.promise().on_completed([fn = std::forward<Fn>(fn)](auto result) {
         try {
             fn(result.get_or_throw());
         } catch (...) {
@@ -220,7 +220,7 @@ template <typename TResult, IsTExecutor TExecutor>
     template <typename Fn>
         requires std::is_invocable_r_v<void, Fn, std::exception&>
 Task<TResult, TExecutor>& Task<TResult, TExecutor>::catching(Fn &&fn) {
-    handle_.promise().on_completed([fn](auto result) {
+    handle_.promise().on_completed([fn = std::forward<Fn>(fn)](auto result) {
         try {
             result.get_or_throw();
         } catch (std::exception &e) {
@@ -235,7 +235,7 @@ template <typename TResult, IsTExecutor TExecutor>
     template <typename Fn>
         requires std::is_invocable_r_v<void, Fn>
 Task<TResult, TExecutor>& Task<TResult, TExecutor>::finally(Fn &&fn) {
-    handle_.promise().on_completed([fn](auto) {
+    handle_.promise().on_completed([fn = std::forward<Fn>(fn)](auto) {
         fn();
     });
     return *this;
@@ -270,7 +270,7 @@ template <IsTExecutor TExecutor>
     template <typename Fn>
         requires std::is_invocable_r_v<void, Fn>
 inline Task<void, TExecutor>& Task<void, TExecutor>::then(Fn &&fn) {
-    handle_.promise().on_completed([fn](auto result) {
+    handle_.promise().on_completed([fn = std::forward<Fn>(fn)](auto result) {
         try {
             result.get_or_throw();
             fn();
@@ -285,7 +285,7 @@ template <IsTExecutor TExecutor>
     template <typename Fn>
         requires std::is_invocable_r_v<void, Fn, std::exception&>
 inline Task<void, TExecutor>& Task<void, TExecutor>::catching(Fn &&fn) {
-    handle_.promise().on_completed([fn](auto result) {
+    handle_.promise().on_completed([fn = std::forward<Fn>(fn)](auto result) {
         try {
             result.get_or_throw();
         } catch (std::exception &e) {
@@ -299,7 +299,7 @@ template <IsTExecutor TExecutor>
     template <typename Fn>
         requires std::is_invocable_r_v<void, Fn>
 inline Task<void, TExecutor>& Task<void, TExecutor>::finally(Fn &&fn) {
-    handle_.promise().on_completed([fn](auto) {
+    handle_.promise().on_completed([fn = std::forward<Fn>(fn)](auto) {
         fn();
     });
     return *this;
@@ -360,7 +360,7 @@ void TaskPromise<TResult, TExecutor>::on_completed(Fn &&fn) {
         lock.unlock();
         fn(value);
     } else {
-        callbacks_.emplace_back(std::move(fn));
+        callbacks_.emplace_back(std::forward<Fn>(fn));
     }
 }
 
@@ -425,7 +425,7 @@ inline void TaskPromise<void, TExecutor>::on_completed(Fn &&fn) {
         lock.unlock();
         fn(value);
     } else {
-        callbacks_.emplace_back(std::move(fn));
+        callbacks_.emplace_back(std::forward<Fn>(fn));
     }
 }
 

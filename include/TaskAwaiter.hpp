@@ -149,9 +149,11 @@ protected:
     virtual void before_resume() {}
     
 private:
-    void dispatch(std::function<void()> &&fn) {
+    template <typename Fn>
+        requires std::is_invocable_r_v<void, Fn>
+    void dispatch(Fn &&fn) {
         if (executor_) {
-            executor_->execute(std::move(fn));
+            executor_->execute(std::forward<Fn>(fn));
         } else {
             fn();
         }
@@ -191,7 +193,12 @@ protected:
     }
 
     void before_resume() override {
-        this->result_ = Result<TResult>(task_.get_result());
+        if constexpr (std::is_void_v<TResult>) {
+            task_.get_result();
+            this->result_ = Result<void>();
+        } else {
+            this->result_ = Result<TResult>(task_.get_result());
+        }
     }
 
 private:
@@ -324,6 +331,19 @@ public:
         return reader;
     }
 
+    template <typename TTask>
+        requires std::is_same_v<TTask, ReadAwaiter<TValue>> || std::is_same_v<TTask, WriteAwaiter<TValue>>
+    void try_push(TTask *task) {
+        if constexpr (std::is_same_v<TTask, ReadAwaiter<TValue>>) {
+            try_push_reader(task);
+        } else if constexpr (std::is_same_v<TTask, WriteAwaiter<TValue>>) {
+            try_push_writer(task);
+        } else {
+            class NotImplementedException : public std::exception {};
+            throw NotImplementedException{};
+        }
+    }
+
     // if any reader is waiting, then the writer will services for the reader.
     // or try to push value to buffer if the buffer is not full.
     // if the buffer is full, then put the writer in the waiting queue.
@@ -409,6 +429,19 @@ public:
         await_reader_queue_.emplace_back(reader);
     }
 
+    template <typename TTask>
+        requires std::is_same_v<TTask, ReadAwaiter<TValue>> || std::is_same_v<TTask, WriteAwaiter<TValue>>
+    void remove_task(TTask *task) {
+        if constexpr (std::is_same_v<TTask, ReadAwaiter<TValue>>) {
+            remove_reader(task);
+        } else if constexpr (std::is_same_v<TTask, WriteAwaiter<TValue>>) {
+            remove_writer(task);
+        } else {
+            class NotImplementedException : public std::exception {};
+            throw NotImplementedException{};
+        }
+    }
+
     void remove_reader(ReadAwaiter<TValue> *reader) {
         std::scoped_lock lock{channel_mutex_};
         await_reader_queue_.remove(reader);
@@ -461,12 +494,8 @@ public:
     }
 
     ~WriteAwaiter() noexcept {
-        try {
-            if (channel_) {
-                channel_->remove_writer(this);
-            }
-        } catch (...) {
-
+        if (channel_) {
+            channel_->remove_writer(this);
         }
     }
 
@@ -504,13 +533,9 @@ public:
     }
 
     ~ReadAwaiter() noexcept {
-        try {
-            if (channel_) {
-                channel_->remove_reader(this);
-            }
-        } catch (...) {
-
-        }   
+        if (channel_) {
+            channel_->remove_reader(this);
+        }
     }
 
 public:
