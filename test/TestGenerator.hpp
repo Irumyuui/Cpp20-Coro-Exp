@@ -3,9 +3,10 @@
 #include <iostream>
 #include <vector>
 
-#include "include/Generator.hpp"
+#include "Generator.hpp"
 
-void TestGenerator() {
+[[maybe_unused]]
+static void TestGenerator() {
   auto vec = karus::coro::Generator<int>::from(1, 2, 3, 4)
            .for_each([](auto &x) { x *= 2; })
            .collect<std::vector<int>>();
